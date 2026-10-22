@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from pathlib import Path
@@ -11,9 +12,14 @@ class FirebaseService:
         self._app = None
         self._db = None
         self._bucket = None
+        self._init_attempted = False
         self._initialize()
 
     def _initialize(self):
+        if self._init_attempted:
+            return
+        self._init_attempted = True
+
         try:
             if not firebase_admin._apps:
                 cred = None
@@ -21,11 +27,37 @@ class FirebaseService:
 
                 # 1. Check if raw JSON string is provided (ideal for Render environment variables)
                 if settings.FIREBASE_KEY_JSON and settings.FIREBASE_KEY_JSON.strip():
+                    raw = settings.FIREBASE_KEY_JSON.strip()
+                    # Strip wrapping single/double quotes if added by UI
+                    if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+                        raw = raw[1:-1]
+
+                    # Try base64 decoding if user encoded it
                     try:
-                        cred_dict = json.loads(settings.FIREBASE_KEY_JSON)
-                        cred = credentials.Certificate(cred_dict)
-                    except Exception as je:
-                        print(f"Error parsing FIREBASE_KEY_JSON: {je}")
+                        decoded = base64.b64decode(raw).decode("utf-8")
+                        if "{" in decoded and "private_key" in decoded:
+                            raw = decoded
+                    except Exception:
+                        pass
+
+                    try:
+                        cred_dict = json.loads(raw)
+                    except Exception:
+                        # Try handling escaped newlines
+                        try:
+                            cred_dict = json.loads(raw.replace("\\n", "\n"))
+                        except Exception as je:
+                            print(f"Error parsing FIREBASE_KEY_JSON: {je}")
+
+                    if cred_dict:
+                        try:
+                            # Fix literal \n in private_key if needed
+                            if "private_key" in cred_dict and "\\n" in cred_dict["private_key"]:
+                                cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                            cred = credentials.Certificate(cred_dict)
+                            print("Loaded Firebase credentials from FIREBASE_KEY_JSON")
+                        except Exception as ce:
+                            print(f"Error creating credentials from FIREBASE_KEY_JSON: {ce}")
 
                 # 2. Check if key file exists at configured path, local root, or Render secret file path
                 if cred is None:
@@ -40,9 +72,15 @@ class FirebaseService:
                                 with open(kp, "r", encoding="utf-8") as f:
                                     cred_dict = json.load(f)
                                 cred = credentials.Certificate(kp)
+                                print(f"Loaded Firebase credentials from file: {kp}")
                                 break
                             except Exception as fe:
                                 print(f"Warning reading key file {kp}: {fe}")
+
+                # If no credentials found, DO NOT initialize Firestore to prevent 25s metadata hang
+                if cred is None:
+                    print("Firebase warning: No valid credentials found. Skipping Firestore to avoid Google Cloud metadata server timeout.")
+                    return
 
                 # Auto-determine project_id and storage_bucket
                 project_id = settings.FIREBASE_PROJECT_ID or (cred_dict.get("project_id") if cred_dict else None)
@@ -54,10 +92,7 @@ class FirebaseService:
                 if storage_bucket:
                     options["storageBucket"] = storage_bucket
 
-                if cred:
-                    self._app = firebase_admin.initialize_app(cred, options)
-                else:
-                    self._app = firebase_admin.initialize_app(options=options)
+                self._app = firebase_admin.initialize_app(cred, options)
             else:
                 self._app = firebase_admin.get_app()
 
@@ -76,15 +111,16 @@ class FirebaseService:
 
     @property
     def db(self):
-        if self._db is None:
+        if self._db is None and not self._init_attempted:
             self._initialize()
         return self._db
 
     @property
     def bucket(self):
-        if self._bucket is None:
+        if self._bucket is None and not self._init_attempted:
             self._initialize()
         return self._bucket
+
 
     def upload_bytes(self, destination_blob_name: str, data: bytes, content_type: Optional[str] = None) -> str:
         """Uploads bytes directly to Firebase Storage bucket."""

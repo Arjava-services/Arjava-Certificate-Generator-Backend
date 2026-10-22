@@ -38,6 +38,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# GZip compression middleware (speeds up data transfer over network)
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
@@ -65,6 +69,19 @@ def health_check():
         "app": settings.PROJECT_NAME,
         "version": settings.VERSION
     }
+
+@app.get("/api/status", tags=["health"])
+def status_check():
+    from app.services.firebase_service import firebase_service
+    is_connected = firebase_service.db is not None
+    return {
+        "status": "healthy",
+        "firebase_enabled": settings.USE_FIREBASE,
+        "firebase_connected": is_connected,
+        "project_id": settings.FIREBASE_PROJECT_ID or (firebase_service.db.project if is_connected else None),
+        "has_key_json": bool(settings.FIREBASE_KEY_JSON and settings.FIREBASE_KEY_JSON.strip()),
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
