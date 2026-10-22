@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# Environment Variables and Secrets (NEVER COMMIT)
+.env
+firebase-key*.json
+*service-account*.json
+client_secret*.json
+
+# SQLite local database
+data/
+*.db
+*.sqlite3
+
+# Uploads and temporary generated files
+uploads/generated/
+uploads/templates/
+!uploads/.gitkeep
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
